@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>Gravel Planner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+// ---------- Foutenpaneel (🐞 linksonder) ----------
+(function(){
+  const logs = []; let panel, pre, badge, bad = 0, tileOk = 0, tileErr = 0;
+  const now = () => new Date().toTimeString().slice(0,8);
+  function info(){
+    const m = document.getElementById('map');
+    return ['pagina: ' + location.protocol + '//' + (location.host || '(lokaal bestand)'),
+      'browser: ' + navigator.userAgent,
+      'Leaflet geladen: ' + (typeof L !== 'undefined' ? 'ja ' + L.version : 'NEE'),
+      'kaartvak: ' + (m ? m.offsetWidth + 'x' + m.offsetHeight : 'niet gevonden'),
+      'tegels geladen: ' + tileOk + ', mislukt: ' + tileErr,
+      'online: ' + navigator.onLine].join('\n');
+  }
+  function draw(){
+    if (badge){ badge.textContent = bad ? '🐞' + bad : '🐞'; }
+    if (panel && panel.style.display !== 'none') pre.textContent = info() + '\n\n' + logs.join('\n');
+  }
+  function add(kind, msg, isBad){
+    logs.push(now() + ' [' + kind + '] ' + msg); if (logs.length > 200) logs.shift();
+    if (isBad){ bad++; }
+    draw();
+  }
+  window.addEventListener('error', e => {
+    const t = e.target;
+    if (t && t !== window && t.tagName){
+      if (t.tagName === 'IMG'){ tileErr++; if (tileErr <= 3) add('tegel', 'laadt niet: ' + String(t.src).slice(0,90), true); else draw(); }
+      else add('laden', 'mislukt: ' + (t.src || t.href), true);
+    } else add('fout', (e.message || 'onbekend') + ' (regel ' + e.lineno + ')', true);
+  }, true);
+  window.addEventListener('load', e => {
+    const t = e.target; if (t && t.tagName === 'IMG' && /leaflet-tile/.test(t.className)){ tileOk++; draw(); }
+  }, true);
+  window.addEventListener('unhandledrejection', e => add('belofte', String(e.reason && e.reason.message || e.reason), true));
+  ['error','warn'].forEach(k => { const o = console[k]; console[k] = function(){
+    add('console.' + k, Array.from(arguments).map(String).join(' ').slice(0,200), k === 'error'); o.apply(console, arguments); }; });
+  const of = window.fetch;
+  window.fetch = function(u){
+    const s = String(u).replace(/^https?:\/\//,'').slice(0,80);
+    return of.apply(this, arguments).then(r => { add('netwerk', r.status + ' ' + s, !r.ok); return r; },
+      e => { add('netwerk', 'GEEN VERBINDING (' + e.message + ') ' + s, true); throw e; });
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    badge = document.createElement('button');
+    badge.textContent = '🐞';
+    badge.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:10000;width:auto;padding:4px 8px;font-size:14px;opacity:.85;border-radius:16px';
+    panel = document.createElement('div');
+    panel.style.cssText = 'display:none;position:fixed;left:0;right:0;bottom:0;max-height:55%;z-index:10001;background:#111;color:#9f9;font:11px/1.4 ui-monospace,monospace;padding:8px;overflow:auto';
+    panel.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:6px"><button id="dbgcopy" style="width:auto">Kopieer</button><button id="dbgclose" style="width:auto">Sluiten</button></div><pre style="white-space:pre-wrap;word-break:break-all;margin:0"></pre>';
+    pre = panel.querySelector('pre');
+    document.body.append(badge, panel);
+    badge.onclick = () => { panel.style.display = 'block'; draw(); };
+    panel.querySelector('#dbgclose').onclick = () => { panel.style.display = 'none'; };
+    panel.querySelector('#dbgcopy').onclick = () => { try { navigator.clipboard.writeText(pre.textContent); } catch(e){} };
+    add('info', 'pagina geladen');
+  });
+})();
+</script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<style>
+  :root{--bg:#fff;--fg:#1d1d1b;--mut:#6b6b66;--acc:#c4561a;--line:#ddd}
+  @media (prefers-color-scheme:dark){:root{--bg:#1f1f1d;--fg:#f0eee8;--mut:#a5a39b;--line:#3a3a36}}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+  #app{display:grid;grid-template-columns:340px minmax(0,1fr);height:100vh;height:100dvh}
+  #side{padding:16px;display:flex;flex-direction:column;gap:12px;border-right:1px solid var(--line);overflow:auto}
+  #main{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;min-width:0}
+  #map{min-height:300px;background:#e8e4dc}
+  h1{font-size:20px;margin:0}
+  input,select,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+  button{cursor:pointer}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  button:disabled{opacity:.4;cursor:default}
+  .row{display:flex;gap:8px}
+  .seg button{padding:6px 4px;font-size:13px}
+  .seg button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{border:1px solid var(--line);border-radius:8px;padding:8px}
+  .stat b{display:block;font-size:20px}
+  small,.hint{color:var(--mut);font-size:13px;line-height:1.4}
+  #status{min-height:18px;font-size:13px;color:var(--acc)}
+  #prof{height:140px;border-top:1px solid var(--line);position:relative;display:none}
+  #prof canvas{width:100%;height:100%;display:block}
+  #ptip{position:absolute;top:4px;right:10px;font-size:13px;color:var(--mut)}
+  #bar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--line)}
+  .leg{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--mut);margin-top:6px}
+  .leg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}
+  #surf{display:none}
+  .opts{display:flex;flex-direction:column;gap:6px;font-size:14px}
+  .opts label{display:flex;align-items:center;gap:8px;cursor:pointer}
+  .opts input{width:auto;padding:0;margin:0}
+  @media(max-width:760px){
+    #app{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) 50%}
+    #main{order:-1}#side{border-right:0;border-top:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <h1>🚵 Gravel Planner</h1>
+
+    <div>
+      <small>1 · Startpunt</small>
+      <input id="qs" placeholder="Zoek adres of plaats + Enter (of klik op de kaart)">
+    </div>
+    <div>
+      <small>2 · Eindpunt</small>
+      <input id="qe" placeholder="Zoek adres of plaats + Enter (of klik op de kaart)">
+    </div>
+
+    <div>
+      <small>Een klik op de kaart zet:</small>
+      <div class="row seg" id="modes">
+        <button data-m="start">Start</button>
+        <button data-m="end">Eind</button>
+        <button data-m="via">Tussenpunt</button>
+      </div>
+    </div>
+
+    <select id="profile">
+      <option value="gravel">Profiel: Gravel</option>
+      <option value="trekking">Profiel: Trekking</option>
+      <option value="fastbike">Profiel: Racefiets</option>
+      <option value="MTB">Profiel: MTB</option>
+    </select>
+
+    <div id="gopts" class="opts">
+      <label><input type="checkbox" id="o_unp" checked> Sterke voorkeur voor onverhard</label>
+      <label><input type="checkbox" id="o_for"> Voorkeur voor bossen</label>
+      <label><input type="checkbox" id="o_town"> Mijd bebouwde kom</label>
+      <label><input type="checkbox" id="o_steep"> Mijd steile stukken</label>
+      <label><input type="checkbox" id="o_wet"> Nat weer (mijd modderige paden)</label>
+    </div>
+    <select id="alt">
+      <option value="0">Routevariant 1 (beste)</option>
+      <option value="1">Routevariant 2</option>
+      <option value="2">Routevariant 3</option>
+      <option value="3">Routevariant 4</option>
+    </select>
+
+    <div class="stats">
+      <div class="stat"><small>Afstand</small><b id="dist">–</b></div>
+      <div class="stat"><small>Stijgen</small><b id="asc">–</b></div>
+    </div>
+    <div id="surf"><small>Ondergrond (geschat)</small><div id="bar"></div><div class="leg" id="leg"></div></div>
+
+    <div class="row">
+      <input id="rtkm" type="number" min="5" max="200" value="40" style="width:80px" title="Afstand in km">
+      <button id="rt">🔄 Rondrit vanaf start</button>
+    </div>
+    <div class="row">
+      <button id="undo">↶ Ongedaan</button>
+      <button id="clear">Wissen</button>
+    </div>
+    <button id="export" class="primary" disabled>⬇ Exporteer GPX</button>
+    <div id="status"></div>
+
+    <div class="hint">
+      Sleep een marker om de route aan te passen, klik op een marker om hem te verwijderen.
+      Tussenpunten worden doorlopen in de volgorde waarin je ze zet.
+      Werkt de kaart niet? Kies rechtsboven op de kaart een andere kaartlaag.
+    </div>
+    <div class="hint">
+      <b>Naar Garmin:</b> importeer het GPX-bestand in Garmin Connect (Trainen → Routes → Importeren) en synchroniseer je toestel, of kopieer het via USB naar <code>Garmin/NewFiles</code>.
+    </div>
+  </div>
+  <div id="main">
+    <div id="map"></div>
+    <div id="prof"><div id="ptip"></div><canvas id="pcv"></canvas></div>
+  </div>
+</div>
+
+<script>
+if (typeof L === 'undefined') {
+  document.body.insertAdjacentHTML('afterbegin', '<p style="position:fixed;top:0;left:0;right:0;z-index:9999;margin:0;padding:16px;background:#fee;color:#900;font-family:system-ui">Kaartbibliotheek (Leaflet) kon niet geladen worden. Controleer je internetverbinding of tik linksonder op 🐞.</p>');
+  throw new Error('Leaflet niet geladen');
+}
+const $ = id => document.getElementById(id);
+const setStatus = t => { $('status').textContent = t; };
+
+// ---------- Kaart ----------
+const map = L.map('map', {zoomControl:true}).setView([51.05, 4.4], 11);
+const carto = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  {subdomains:'abcd', maxZoom:19, attribution:'© OpenStreetMap-bijdragers © CARTO'}).addTo(map);
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom:19, attribution:'© OpenStreetMap-bijdragers'});
+const cyclosm = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+  {subdomains:'abc', maxZoom:20, attribution:'© OpenStreetMap-bijdragers, CyclOSM'});
+L.control.layers({'Kaart (CARTO)':carto, 'OpenStreetMap':osm, 'CyclOSM (fiets)':cyclosm}, null, {position:'topright'}).addTo(map);
+let tilesOk = false;
+[carto, osm, cyclosm].forEach(l => {
+  l.on('tileload', () => { tilesOk = true; });
+  l.on('tileerror', () => { if (!tilesOk) setStatus('Kaarttegels laden niet. Kies rechtsboven een andere kaartlaag.'); });
+});
+setTimeout(() => map.invalidateSize(), 100);
+
+// ---------- Staat ----------
+let startM = null, endM = null, viaMs = [];
+let mode = 'start', line = null, coords = [], history = [], token = 0;
+
+function icon(kind, n){
+  const c = kind === 'start' ? '#2e9e4f' : kind === 'end' ? '#c0392b' : '#c4561a';
+  const label = kind === 'start' ? 'S' : kind === 'end' ? 'E' : n;
+  return L.divIcon({className:'', iconSize:[26,26], iconAnchor:[13,13],
+    html:`<div style="width:26px;height:26px;border-radius:50%;background:${c};color:#fff;font:600 12px system-ui;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px #0006">${label}</div>`});
+}
+function setMode(m){
+  mode = m;
+  document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+}
+document.querySelectorAll('#modes button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+setMode('start');
+
+function mk(ll, kind){
+  const m = L.marker(ll, {draggable:true, icon:icon(kind,1)}).addTo(map);
+  m.on('dragstart', snapshot);
+  m.on('dragend', route);
+  m.on('click', () => {
+    snapshot(); map.removeLayer(m);
+    if (m === startM){ startM = null; setMode('start'); }
+    else if (m === endM){ endM = null; setMode('end'); }
+    else viaMs = viaMs.filter(x => x !== m);
+    refreshIcons(); route();
+  });
+  return m;
+}
+function refreshIcons(){
+  if (startM) startM.setIcon(icon('start'));
+  if (endM) endM.setIcon(icon('end'));
+  viaMs.forEach((m,i) => m.setIcon(icon('via', i+1)));
+}
+function snapshot(){
+  history.push({s: startM && startM.getLatLng(), e: endM && endM.getLatLng(), v: viaMs.map(m => m.getLatLng())});
+  if (history.length > 50) history.shift();
+}
+function clearMarkers(){
+  [startM, endM, ...viaMs].forEach(m => m && map.removeLayer(m));
+  startM = endM = null; viaMs = [];
+}
+function restore(st){
+  clearMarkers();
+  if (st.s) startM = mk(st.s, 'start');
+  if (st.e) endM = mk(st.e, 'end');
+  st.v.forEach(p => viaMs.push(mk(p, 'via')));
+  refreshIcons();
+  setMode(!startM ? 'start' : !endM ? 'end' : 'via');
+  route();
+}
+function place(ll, kind){
+  snapshot();
+  if (kind === 'start'){ if (startM) startM.setLatLng(ll); else startM = mk(ll,'start'); setMode(endM ? 'via' : 'end'); }
+  else if (kind === 'end'){ if (endM) endM.setLatLng(ll); else endM = mk(ll,'end'); setMode('via'); }
+  else viaMs.push(mk(ll,'via'));
+  refreshIcons(); route();
+}
+map.on('click', e => place(e.latlng, mode));
+
+// ---------- Routering ----------
+function nice(t){
+  t = String(t);
+  if (/not mapped|position/i.test(t)) return 'Een punt ligt te ver van een weg of buiten het dekkingsgebied van BRouter. Zet het punt dichter bij een weg.';
+  return t.slice(0, 140);
+}
+async function brouter(params){
+  const sel = $('profile').value;
+  const profiles = sel === 'trekking' ? ['trekking'] : [sel, 'trekking'];
+  let lastErr = '';
+  for (const p of profiles){
+    const opts = p === 'gravel'
+      ? `&profile:prefer_unpaved_paths=${$('o_unp').checked}&profile:prefer_forests=${$('o_for').checked}&profile:avoid_towns=${$('o_town').checked}&profile:avoid_steep_inclines=${$('o_steep').checked}&profile:assume_wet_conditions=${$('o_wet').checked}`
+      : '';
+    const r = await fetch(`https://brouter.de/brouter?${params}&profile=${p}${opts}&alternativeidx=${$('alt').value}&format=geojson`);
+    const t = await r.text();
+    if (r.ok){
+      if (p !== sel) setStatus(`Profiel "${sel}" niet beschikbaar, trekking gebruikt.`);
+      return JSON.parse(t);
+    }
+    lastErr = t;
+    if (!/profile/i.test(t)) break;
+  }
+  throw new Error(lastErr);
+}
+const lonlat = ll => ll.lng.toFixed(6) + ',' + ll.lat.toFixed(6);
+
+async function route(){
+  const my = ++token;
+  if (!(startM && endM)){
+    if (line){ map.removeLayer(line); line = null; }
+    coords = []; $('dist').textContent = '–'; $('asc').textContent = '–'; $('export').disabled = true;
+    if (!tilesOk || $('status').textContent.startsWith('Route')) setStatus('');
+    clearViz();
+    return;
+  }
+  setStatus('Route berekenen…');
+  const pts = [startM, ...viaMs, endM].map(m => lonlat(m.getLatLng())).join('|');
+  try{
+    const gj = await brouter('lonlats=' + pts);
+    if (my !== token) return;
+    const had = coords.length;
+    render(gj.features[0]);
+    if (!had) map.fitBounds(line.getBounds(), {padding:[40,40]});
+    if ($('status').textContent.startsWith('Route')) setStatus('');
+  }catch(e){
+    if (my !== token) return;
+    console.error('BRouter: ' + e.message); setStatus('Routering mislukt: ' + nice(e.message));
+  }
+}
+
+function render(f){
+  coords = f.geometry.coordinates;
+  drawRoute(f.properties.messages);
+  $('dist').textContent = (f.properties['track-length']/1000).toFixed(1) + ' km';
+  $('asc').textContent = (f.properties['filtered ascend'] ?? 0) + ' m';
+  $('export').disabled = false;
+  surfaces(f.properties.messages);
+  $('prof').style.display = 'block';
+  map.invalidateSize();
+  profile();
+}
+function clearViz(){
+  $('surf').style.display = 'none'; $('prof').style.display = 'none';
+  if (hov){ map.removeLayer(hov); hov = null; }
+  map.invalidateSize();
+}
+
+// ---------- Ondergrond ----------
+const SURF_COLS = ['#5b6b7c','#c4561a','#d9b44a'];
+const PAVED = ['asphalt','paved','concrete','paving_stones','sett','cobblestone','concrete:plates','concrete:lanes','metal','bricks'];
+const UNPAVED = ['gravel','fine_gravel','compacted','unpaved','dirt','ground','earth','grass','sand','mud','pebblestone','woodchips','grass_paver'];
+function classify(tags){
+  const t = {}; (tags||'').split(' ').forEach(x => { const [k,v] = x.split('='); t[k] = v; });
+  if (t.surface){ if (PAVED.includes(t.surface)) return 0; if (UNPAVED.includes(t.surface)) return 1; }
+  if (['track','path','bridleway'].includes(t.highway)) return 1;
+  return t.highway ? 0 : 2;
+}
+function surfaces(msgs){
+  if (!msgs || msgs.length < 2){ $('surf').style.display = 'none'; return; }
+  const sum = [0,0,0];
+  msgs.slice(1).forEach(r => { sum[classify(r[9])] += +r[3] || 0; });
+  const tot = sum[0]+sum[1]+sum[2] || 1;
+  const names = ['Verhard','Onverhard / gravel','Onbekend'];
+  $('bar').innerHTML = sum.map((v,i) => `<div style="width:${v/tot*100}%;background:${SURF_COLS[i]}"></div>`).join('');
+  $('leg').innerHTML = sum.map((v,i) => v ? `<span><i style="background:${SURF_COLS[i]}"></i>${names[i]} ${Math.round(v/tot*100)}%</span>` : '').join('');
+  $('surf').style.display = 'block';
+}
+function drawRoute(msgs){
+  if (line) map.removeLayer(line);
+  line = L.featureGroup().addTo(map);
+  const ll = coords.map(c => [c[1], c[0]]);
+  L.polyline(ll, {color:'#fff', weight:9, opacity:.85}).addTo(line);
+  let segs = [];
+  if (msgs && msgs.length > 1){
+    let si = 0, ok = true;
+    for (const r of msgs.slice(1)){
+      const lon = +r[0], lat = +r[1];
+      let e = -1;
+      for (let i = si; i < coords.length; i++){
+        if (Math.round(coords[i][0]*1e6) === lon && Math.round(coords[i][1]*1e6) === lat){ e = i; break; }
+      }
+      if (e < 0){ ok = false; break; }
+      if (e > si) segs.push([si, e, classify(r[9])]);
+      si = e;
+    }
+    if (ok && si < coords.length-1) segs.push([si, coords.length-1, segs.length ? segs[segs.length-1][2] : 2]);
+    if (!ok) segs = [];
+  }
+  if (!segs.length) segs = [[0, coords.length-1, -1]];
+  segs.forEach(([a,b,c]) => L.polyline(ll.slice(a,b+1), {color: c<0 ? '#c4561a' : SURF_COLS[c], weight:5, opacity:1}).addTo(line));
+}
+
+// ---------- Hoogteprofiel ----------
+let hov = null, pd = [], pm = {};
+function profile(){
+  if (!coords.length) return;
+  const cv = $('pcv'), box = $('prof'), d = window.devicePixelRatio || 1;
+  const W = box.clientWidth, H = box.clientHeight;
+  cv.width = W*d; cv.height = H*d;
+  const g = cv.getContext('2d'); g.scale(d,d);
+  pd = [0];
+  for (let i = 1; i < coords.length; i++) pd.push(pd[i-1] + map.distance([coords[i-1][1],coords[i-1][0]], [coords[i][1],coords[i][0]]));
+  const el = coords.map(c => c[2] ?? 0);
+  let lo = Math.min(...el), hi = Math.max(...el); if (hi-lo < 20) hi = lo+20;
+  const L0 = 44, R0 = 10, T0 = 22, B0 = 18, tot = pd[pd.length-1] || 1;
+  pm = {L0, R0, W, tot};
+  const X = m => L0 + m/tot*(W-L0-R0), Y = e => H-B0 - (e-lo)/(hi-lo)*(H-B0-T0);
+  g.fillStyle = 'rgba(196,86,26,.25)'; g.strokeStyle = '#c4561a'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(X(0), H-B0);
+  el.forEach((e,i) => g.lineTo(X(pd[i]), Y(e)));
+  g.lineTo(X(tot), H-B0); g.closePath(); g.fill();
+  g.beginPath(); el.forEach((e,i) => i ? g.lineTo(X(pd[i]),Y(e)) : g.moveTo(X(pd[i]),Y(e))); g.stroke();
+  g.fillStyle = getComputedStyle(document.body).color; g.globalAlpha = .6; g.font = '11px system-ui';
+  g.fillText(Math.round(hi)+' m', 4, T0+4); g.fillText(Math.round(lo)+' m', 4, H-B0);
+  g.fillText('0', L0, H-4); g.textAlign = 'right'; g.fillText((tot/1000).toFixed(1)+' km', W-R0, H-4);
+  g.globalAlpha = 1;
+}
+$('pcv').addEventListener('mousemove', e => {
+  if (!pd.length) return;
+  const m = (e.offsetX - pm.L0) / (pm.W - pm.L0 - pm.R0) * pm.tot;
+  if (m < 0 || m > pm.tot) return;
+  let i = pd.findIndex(v => v >= m); if (i < 0) i = pd.length-1;
+  const c = coords[i], ll = [c[1], c[0]];
+  if (!hov) hov = L.circleMarker(ll, {radius:7, color:'#fff', weight:2, fillColor:'#c4561a', fillOpacity:1}).addTo(map); else hov.setLatLng(ll);
+  $('ptip').textContent = (pd[i]/1000).toFixed(1) + ' km · ' + Math.round(c[2] ?? 0) + ' m';
+});
+$('pcv').addEventListener('mouseleave', () => { if (hov){ map.removeLayer(hov); hov = null; } $('ptip').textContent = ''; });
+window.addEventListener('resize', () => { map.invalidateSize(); profile(); });
+
+// ---------- Zoeken ----------
+async function geocode(q){
+  const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q));
+  const j = await r.json();
+  return j[0] ? L.latLng(+j[0].lat, +j[0].lon) : null;
+}
+function bindSearch(id, kind){
+  $(id).addEventListener('keydown', async e => {
+    if (e.key !== 'Enter' || !$(id).value.trim()) return;
+    setStatus('Zoeken…');
+    try{
+      const ll = await geocode($(id).value);
+      if (!ll) return setStatus('Niets gevonden voor "' + $(id).value + '"');
+      place(ll, kind);
+      if (startM && endM) map.fitBounds(L.latLngBounds([startM.getLatLng(), endM.getLatLng()]).pad(.3));
+      else map.setView(ll, 14);
+      if ($('status').textContent === 'Zoeken…') setStatus('');
+    }catch{ setStatus('Zoeken mislukt'); }
+  });
+}
+bindSearch('qs', 'start'); bindSearch('qe', 'end');
+
+// ---------- Rondrit ----------
+$('rt').onclick = async () => {
+  if (!startM) return setStatus('Zet eerst een startpunt (zoek een adres of klik op de kaart).');
+  const km = Math.min(200, Math.max(5, +$('rtkm').value || 40));
+  const start = startM.getLatLng();
+  snapshot(); restore({s:start, e:null, v:[]});
+  const my = ++token;
+  setStatus('Rondrit berekenen…');
+  try{
+    const gj = await brouter(`lonlats=${lonlat(start)}&roundTripDistance=${km*1000}&direction=${Math.floor(Math.random()*360)}`);
+    if (my !== token) return;
+    render(gj.features[0]);
+    map.fitBounds(line.getBounds(), {padding:[40,40]});
+    setStatus('');
+  }catch(e){
+    if (my !== token) return;
+    console.error('BRouter: ' + e.message); setStatus('Rondrit mislukt: ' + nice(e.message));
+  }
+};
+
+// ---------- Overig ----------
+function syncOpts(){ $('gopts').style.display = $('profile').value === 'gravel' ? 'flex' : 'none'; }
+syncOpts();
+$('profile').onchange = () => { syncOpts(); route(); };
+document.querySelectorAll('#gopts input, #alt').forEach(el => el.onchange = route);
+$('undo').onclick = () => { if (history.length) restore(history.pop()); };
+$('clear').onclick = () => { snapshot(); restore({s:null, e:null, v:[]}); $('qs').value = $('qe').value = ''; };
+
+function toGPX(){
+  const name = 'Gravelroute ' + new Date().toISOString().slice(0,10);
+  const pts = coords.map(c => `<trkpt lat="${c[1]}" lon="${c[0]}">${c[2] != null ? `<ele>${c[2]}</ele>` : ''}</trkpt>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Gravel Planner" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata><name>${name}</name></metadata>
+<trk><name>${name}</name><type>gravel</type><trkseg>
+${pts}
+</trkseg></trk></gpx>`;
+}
+$('export').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([toGPX()], {type:'application/gpx+xml'}));
+  a.download = 'gravelroute.gpx';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>
